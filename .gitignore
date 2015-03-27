@@ -1,0 +1,9 @@
+**/target/
+**/.settings/
+**/META-INF/
+
+.history
+.sbtserver*
+**/.cache
+**/.classpath
+**/.project
