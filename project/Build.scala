@@ -25,6 +25,7 @@ object Build extends sbt.Build {
     resolvers ++= Seq(
     ),
     libraryDependencies ++= Seq(
+      "junit" % "junit" % "4.12" % "test"
     ),
     EclipseKeys.withSource := true,
     initialCommands in console := """
