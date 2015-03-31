@@ -16,6 +16,9 @@ object TestHelper {
   }
 
   def success[A](rf: RetriableFuture[A]): A = {
+    import scala.concurrent.stm._
+    atomic { implicit txn ⇒ rf.state() = Retry }
+
     val p = Promise[A]
     rf onSuccess {
       case v =>
