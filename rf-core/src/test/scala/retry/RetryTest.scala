@@ -7,6 +7,7 @@ import scala.concurrent.duration.Duration
 import org.junit.ComparisonFailure
 import scala.util.control.NoStackTrace
 import org.junit.Ignore
+import scala.concurrent.Future
 
 object TestHelper {
 
@@ -16,17 +17,20 @@ object TestHelper {
         throw new ComparisonFailure("", expected.toString, actual.toString)
   }
 
-  def success[A](rf: RetriableFuture[A]): A = {
-    import scala.concurrent.stm._
-//    atomic { implicit txn ⇒ rf.state() = Retry }
-
+  def fut[A](rf: RetriableFuture[A]): Future[A] = {
     val p = Promise[A]
     rf onSuccess {
       case v =>
-        p.success(v)
+        p success v
     }
-    Await.result(p.future, Duration.Inf)
+    p.future
   }
+
+  def await[A](f: Future[A]): A =
+    Await.result(f, Duration.Inf)
+
+  def ex: Nothing =
+    throw new TestException
 }
 
 class TestException extends RuntimeException with NoStackTrace
@@ -36,27 +40,32 @@ class RetryTest {
 
   @Test
   def no_retry() = {
-    val rf = RetriableFuture(1)
-    success(rf) === 1
+    var i = 0
+    val rf = RetriableFuture { i += 1; i }
+    await(fut(rf)) === i
+    i === 1
   }
 
   @Test @Ignore
   def single_retry() = {
-    var b = false
-    val rf = RetriableFuture(if (b) 1 else { b = true; throw new TestException})
-    success(rf) === 1
+    var i = 0
+    val rf = RetriableFuture { i += 1; if (i == 2) i else ex }
+    await(fut(rf)) === i
+    i === 1
   }
 
   @Test @Ignore
   def multiple_retries() = {
     var i = 0
-    val rf = RetriableFuture {
-      i += 1
-      if (i < 5)
-        throw new TestException
-      else
-        i
-    }
-    success(rf) === i
+    val rf = RetriableFuture { i += 1; if (i == 6) i else ex }
+    await(fut(rf)) === i
+    i === 5
+  }
+
+  @Test
+  def onSuccess_registers_callback() = {
+    val v = 123
+    val rf = RetriableFuture { v }
+    1 to 10 map (_ ⇒ fut(rf)) foreach (f ⇒ await(f) === v)
   }
 }

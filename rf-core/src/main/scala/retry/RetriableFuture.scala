@@ -23,16 +23,22 @@ class RetriableFuture[A] {
   val state = Ref[State](Idle)
   val res = Ref[Res[A]](Empty)
 
-  @volatile private var listener = () ⇒ ()
+  @volatile private var listeners = Seq[Res[A] ⇒ Unit]()
 
   def onSuccess[U](f: PartialFunction[A, U]): Unit = {
-    listener = () ⇒  atomic { implicit txn ⇒
-      res() match {
-        case Succ(value) ⇒ if (f.isDefinedAt(value)) f(value)
-        case _           ⇒
-      }
-    }
-    listener()
+    listeners :+= ((_: Res[A]) match {
+      case Succ(value) ⇒ if (f.isDefinedAt(value)) f(value); ()
+      case _           ⇒
+    })
+    notifyListeners()
+  }
+
+  def onFailure[U](f: PartialFunction[Throwable, U]): Unit = {
+    listeners :+= ((_: Res[A]) match {
+      case Fail(err) ⇒ if (f.isDefinedAt(err)) f(err); ()
+      case _         ⇒
+    })
+    notifyListeners()
   }
 
   private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): () ⇒ Unit = {
@@ -55,7 +61,7 @@ class RetriableFuture[A] {
         atomic { implicit txn ⇒
           state() = Stop
           res() = Succ(value)
-          listener()
+          notifyListeners()
         }
         checkRetryState(stop, cont)()
     }
@@ -77,6 +83,11 @@ class RetriableFuture[A] {
       }
     }
     p.future
+  }
+
+  private def notifyListeners() = atomic { implicit txn ⇒
+    val r = res()
+    listeners foreach (_(r))
   }
 }
 object RetriableFuture {
