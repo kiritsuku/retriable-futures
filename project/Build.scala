@@ -25,6 +25,7 @@ object Build extends sbt.Build {
     resolvers ++= Seq(
     ),
     libraryDependencies ++= Seq(
+      "org.scala-stm" %% "scala-stm" % "0.7",
       "junit" % "junit" % "4.12" % "test"
     ),
     EclipseKeys.withSource := true,

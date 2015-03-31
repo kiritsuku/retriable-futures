@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.Promise
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+import scala.concurrent.stm._
 
 sealed trait State
 case object Idle extends State
@@ -17,56 +18,100 @@ case object Empty extends Res[Nothing]
 case class Fail(err: Throwable) extends Res[Nothing]
 case class Succ[A](value: A) extends Res[A]
 
-trait RetriableFuture[A] {
-  def comp: () ⇒ A
+class RetriableFuture[A] {
 
-  @volatile var state: State = Retry
-  @volatile var res: Res[A] = Empty
+  val state = Ref[State](Idle)
+  val res = Ref[Res[A]](Empty)
 
   @volatile private var listener = () ⇒ ()
 
   def onSuccess[U](f: PartialFunction[A, U]): Unit = {
-    listener = () ⇒ res match {
-      case Succ(value) ⇒ if (f.isDefinedAt(value)) f(value)
-      case _ ⇒
+    listener = () ⇒  atomic { implicit txn ⇒
+      res() match {
+        case Succ(value) ⇒ if (f.isDefinedAt(value)) f(value)
+        case _           ⇒
+      }
     }
     listener()
   }
 
-  private def retry(): Unit = {
-    val f = Future(comp())
+  private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): () ⇒ Unit = {
+    atomic { implicit txn ⇒
+      state() match {
+        case Idle ⇒
+          retry
+        case Retry ⇒
+          state() = Idle
+          res() = Empty
+          cont
+        case Stop ⇒
+          stop
+      }
+    }
+  }
+  def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A] = {
     f onSuccess {
       case value ⇒
-        state = Stop
-        res = Succ(value)
-
-        listener()
+        atomic { implicit txn ⇒
+          state() = Stop
+          res() = Succ(value)
+          listener()
+        }
+        checkRetryState(stop, cont)()
     }
     f onFailure {
       case err ⇒
-        res = Fail(err)
-        state match {
-          case Idle ⇒ ???
-          case Retry ⇒ retry()
-          case Stop ⇒
-        }
+        atomic { implicit txn ⇒ res() = Fail(err) }
+        checkRetryState(stop, cont)()
     }
+    this
+  }
+
+  def future: Future[A] = {
+    val p = Promise[A]
+    atomic { implicit txn ⇒
+      res() match {
+        case Empty       ⇒ retry
+        case Fail(err)   ⇒ p failure err
+        case Succ(value) ⇒ p success value
+      }
+    }
+    p.future
   }
 }
 object RetriableFuture {
+
   def apply[A](f: ⇒ A): RetriableFuture[A] = {
-    val rf = new RetriableFuture[A] {
-      override val comp = () ⇒ f
-    }
-    rf.retry()
+    val rf = new RetriableFuture[A]
+    def loop(): Unit = rf.fromFuture(Future(f), () ⇒ (), loop)
+    loop()
     rf
   }
-}
-object AtomicRefUtils {
-  implicit class RichAtomicRef[A](private val ref: AtomicReference[A]) extends AnyVal {
-    def update(a: A): Unit =
-      ref.set(a)
-    def apply(): A =
-      ref.get
+
+  def orElse[A](rf1: RetriableFuture[A], rf2: RetriableFuture[A]): RetriableFuture[A] = {
+    fromFutOp(Seq(rf1, rf2)) {
+      case Seq(rf1, rf2) ⇒
+        val f1 = rf1.future
+        val f2 = rf2.future
+        f1 fallbackTo f2
+    }
   }
+
+  private def fromFutOp[A](fs: Seq[RetriableFuture[A]])(prod: Seq[RetriableFuture[A]] ⇒ Future[A]): RetriableFuture[A] = {
+    val rf = new RetriableFuture[A]
+    def loop(): Unit = {
+      val f = prod(fs)
+      val stop = () ⇒ {
+        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Stop })
+      }
+      val cont = () ⇒ {
+        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Retry })
+        loop
+      }
+      rf.fromFuture(f, stop, cont)
+    }
+    loop()
+    rf
+  }
+
 }
