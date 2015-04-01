@@ -9,19 +9,42 @@ import scala.util.control.NoStackTrace
 import org.junit.Ignore
 import scala.concurrent.Future
 
-object TestHelper {
+abstract class TestHelper {
 
-  implicit class Assert_===[A](val actual: A) extends AnyVal {
-    def ===(expected: A): Unit =
+  implicit class Assert_===[A](actual: A) {
+    def ===(expected: A): Unit = {
+      if (exc != null)
+        throw exc
       if (actual != expected)
         throw new ComparisonFailure("", expected.toString, actual.toString)
+    }
   }
 
-  def fut[A](rf: RetriableFuture[A]): Future[A] = {
+  /**
+   * If an exception occurs in another thread, it needs to be logged here. This
+   * allows us to re-throw the exception on the main thread where it is caught
+   * by JUnit
+   */
+  @volatile private var exc: Exception = _
+
+  def succ[A](rf: RetriableFuture[A]): Future[A] = {
     val p = Promise[A]
     rf onSuccess {
       case v =>
-        p success v
+        try p success v catch {
+          case e: Exception ⇒ exc = e
+        }
+    }
+    p.future
+  }
+
+  def fail[A](rf: RetriableFuture[A]): Future[A] = {
+    val p = Promise[A]
+    rf onFailure {
+      case err =>
+        try p failure err catch {
+          case e: Exception ⇒ exc = e
+        }
     }
     p.future
   }
@@ -35,14 +58,13 @@ object TestHelper {
 
 class TestException extends RuntimeException with NoStackTrace
 
-class RetryTest {
-  import TestHelper._
+class RetryTest extends TestHelper {
 
   @Test
   def no_retry() = {
     var i = 0
     val rf = RetriableFuture { i += 1; i }
-    await(fut(rf)) === i
+    await(succ(rf)) === i
     i === 1
   }
 
@@ -50,7 +72,7 @@ class RetryTest {
   def single_retry() = {
     var i = 0
     val rf = RetriableFuture { i += 1; if (i == 2) i else ex }
-    await(fut(rf)) === i
+    await(succ(rf)) === i
     i === 1
   }
 
@@ -58,14 +80,20 @@ class RetryTest {
   def multiple_retries() = {
     var i = 0
     val rf = RetriableFuture { i += 1; if (i == 6) i else ex }
-    await(fut(rf)) === i
+    await(succ(rf)) === i
     i === 5
   }
 
   @Test
-  def onSuccess_registers_callback() = {
+  def onSuccess_can_handle_multiple_callbacks() = {
     val v = 123
     val rf = RetriableFuture { v }
-    1 to 10 map (_ ⇒ fut(rf)) foreach (f ⇒ await(f) === v)
+    1 to 10 map (_ ⇒ succ(rf)) foreach (f ⇒ await(f) === v)
+  }
+
+  @Test
+  def onFailure_can_handle_multiple_callbacks() = {
+    val rf = RetriableFuture { ex }
+    1 to 10 map (_ ⇒ fail(rf)) foreach (f ⇒ await(f.failed).isInstanceOf[TestException] === true)
   }
 }
