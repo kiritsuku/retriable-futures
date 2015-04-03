@@ -38,17 +38,6 @@ trait RetriableFuture[A] {
     }
     listener()
   }
-
-  /*
-  def orElse[B >: A](rf: RetriableFuture[B]): RetriableFuture[B] = {
-    val f1 = RetriableFuture.asFuture(this)
-    val f2 = RetriableFuture.asFuture(rf)
-    val f = f1 fallbackTo f2
-
-    ???
-  }
-  */
-
   /*private def retryComp2(fs: Seq[RetriableFuture[A]], prod: Seq[RetriableFuture[A]] ⇒ Future[A]): Unit = {
     val f = prod(fs)
 
@@ -71,6 +60,28 @@ trait RetriableFuture[A] {
         }
     }
   }*/
+
+  private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): () ⇒ Unit = {
+    atomic { implicit txn ⇒
+      state() match {
+        case Idle ⇒
+          println(s"checkRetryState idle")
+          retry
+        case Retry ⇒
+          res() match {
+            case _: Succ[_] ⇒ ???
+            case _ ⇒
+              state() = Idle
+              res() = Empty
+              println(s"checkRetryState retry")
+              cont
+          }
+        case Stop ⇒
+          println(s"checkRetryState stop")
+          stop
+      }
+    }
+  }
 
   private def retryComp(): Unit = {
     val f = Future(comp())
@@ -100,11 +111,57 @@ trait RetriableFuture[A] {
   }
 }
 object RetriableFuture {
-  /*def asFuture[A](rf: RetriableFuture[A]): Future[A] = {
+  private type RF[A] = RetriableFuture[A]
+
+  def fromFuture[A](f: Future[A], rf: RetriableFuture[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A] = {
+    f onSuccess {
+      case value ⇒
+        println(s"fromFuture success: $value")
+        atomic { implicit txn ⇒ rf.res() = Succ(value) }
+        rf.checkRetryState(stop, cont)()
+    }
+    f onFailure {
+      case err ⇒
+        println(s"fromFuture err: $err")
+        atomic { implicit txn ⇒ rf.res() = Fail(err) }
+        rf.checkRetryState(stop, cont)()
+    }
+    rf
+  }
+
+  def orElse[A](rf1: RetriableFuture[A], rf2: RetriableFuture[A]): RetriableFuture[A] = {
+    fromFutOp(Seq(rf1, rf2)) {
+      case Seq(rf1, rf2) ⇒
+        val f1 = RetriableFuture.asFuture(rf1)
+        val f2 = RetriableFuture.asFuture(rf2)
+        f1 fallbackTo f2
+    }
+  }
+
+  private def fromFutOp[A](fs: Seq[RetriableFuture[A]])(prod: Seq[RetriableFuture[A]] ⇒ Future[A]): RetriableFuture[A] = {
+    val rf = new RetriableFuture[A] {
+      override val comp = () ⇒ ???
+    }
+    def loop(): Unit = {
+      val f = prod(fs)
+      val stop = () ⇒ {
+        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Stop })
+      }
+      val cont = () ⇒ {
+        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Retry })
+        loop
+      }
+      RetriableFuture.fromFuture(f, rf, stop, cont)
+    }
+    loop()
+    rf
+  }
+
+  def asFuture[A](rf: RetriableFuture[A]): Future[A] = {
     val p = Promise[A]
-    RetriableFuture {
-      rf.res match {
-        case Empty ⇒ forceRetry
+    atomic { implicit txn ⇒
+      rf.res() match {
+        case Empty ⇒ retry
         case Fail(err) ⇒ p.failure(err)
         case Succ(value) ⇒ p.success(value)
       }
@@ -112,28 +169,17 @@ object RetriableFuture {
     p.future
   }
 
-  def fromFuture[A](f: Future[A]): RetriableFuture[A] = {
-    val rf = new RetriableFuture[A] {
-      override val comp = () ⇒ if (!f.isCompleted) forceRetry
-    }
-
-    f onSuccess {
-      case value ⇒
-
-    }
-    ???
-  }*/
-
   def apply[A](f: ⇒ A): RetriableFuture[A] = {
     val rf = new RetriableFuture[A] {
-      override val comp = () ⇒ f
+      override val comp = () ⇒ ???
     }
-    rf.retryComp()
+    def loop(): Unit = {
+      println("apply#loop")
+      fromFuture(Future(f), rf, () ⇒ (), loop)
+    }
+    loop()
     rf
   }
-
-  private def forceRetry =
-    throw new ForceRetry
 
 }
 object AtomicRefUtils {
