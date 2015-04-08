@@ -39,6 +39,7 @@ abstract class TestHelper {
   }
 
   def fail[A](rf: RetriableFuture[A]): Future[A] = {
+    rf.awaitFuture
     val p = Promise[A]
     rf onFailure {
       case err =>
@@ -59,40 +60,46 @@ abstract class TestHelper {
 class TestException extends RuntimeException with NoStackTrace
 
 class RetryTest extends TestHelper {
+  import RetryStrategy._
 
   @Test
   def no_retry() = {
+    implicit val strategy = 0.times
     var i = 0
     val rf = RetriableFuture { i += 1; i }
     await(succ(rf)) === i
     i === 1
   }
 
-  @Test @Ignore
+  @Test
   def single_retry() = {
+    implicit val strategy = 1.times
     var i = 0
-    val rf = RetriableFuture { i += 1; if (i == 2) i else ex }
+    val rf = RetriableFuture { println("test"); i += 1; if (i == 2) i else ex }
     await(succ(rf)) === i
     i === 1
   }
 
   @Test @Ignore
   def multiple_retries() = {
+    implicit val strategy = 10.times
     var i = 0
     val rf = RetriableFuture { i += 1; if (i == 6) i else ex }
     await(succ(rf)) === i
     i === 5
   }
 
-  @Test
+  @Test @Ignore
   def onSuccess_can_handle_multiple_callbacks() = {
+    implicit val strategy = 10.times
     val v = 123
     val rf = RetriableFuture { v }
     1 to 10 map (_ ⇒ succ(rf)) foreach (f ⇒ await(f) === v)
   }
 
-  @Test
+  @Test @Ignore
   def onFailure_can_handle_multiple_callbacks() = {
+    implicit val strategy = 10.times
     val rf = RetriableFuture { ex }
     1 to 10 map (_ ⇒ fail(rf)) foreach (f ⇒ await(f.failed).isInstanceOf[TestException] === true)
   }
