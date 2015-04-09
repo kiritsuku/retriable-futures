@@ -39,7 +39,6 @@ abstract class TestHelper {
   }
 
   def fail[A](rf: RetriableFuture[A]): Future[A] = {
-    rf.awaitFuture
     val p = Promise[A]
     rf onFailure {
       case err =>
@@ -75,7 +74,7 @@ class RetryTest extends TestHelper {
   def single_retry() = {
     implicit val strategy = 1.times
     var i = 0
-    val rf = RetriableFuture { println("test"); i += 1; if (i == 2) i else ex }
+    val rf = RetriableFuture { i += 1; if (i == 2) i else ex }
     await(succ(rf)) === i
     i === 2
   }
@@ -99,7 +98,7 @@ class RetryTest extends TestHelper {
 
   @Test
   def onFailure_can_handle_multiple_callbacks() = {
-    implicit val strategy = 10.times
+    implicit val strategy = 5.times
     val rf = RetriableFuture { ex }
     1 to 10 map (_ ⇒ fail(rf)) foreach (f ⇒ await(f.failed).isInstanceOf[TestException] === true)
   }

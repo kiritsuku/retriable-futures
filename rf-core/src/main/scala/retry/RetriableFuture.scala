@@ -90,7 +90,6 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
         case Retry ⇒
           state() = Idle
           res() = Empty
-          strategy.triggerRetry()
           cont
         case Stop ⇒
           stop
@@ -138,6 +137,7 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
 
         case Fail(err) ⇒
           if (strategy.canRetry) {
+            strategy.triggerRetry()
             res() = Empty
             state() = Retry
             loop
