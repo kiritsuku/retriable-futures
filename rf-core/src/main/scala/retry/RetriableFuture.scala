@@ -129,9 +129,8 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
     p.future
   }
 
-  def awaitFuture: Future[A] = {
-    val p = Promise[A]
-    def loop(): Unit = Future(atomic { implicit txn ⇒
+  private def checkRetryRes(stopOnSucc: A ⇒ Unit, stopOnFail: Throwable ⇒ Unit, cont: () ⇒ Unit): Unit = {
+    atomic { implicit txn ⇒
       res() match {
         case Empty ⇒
           retry
@@ -141,15 +140,22 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
             strategy.triggerRetry()
             res() = Empty
             state() = Retry
-            loop
+            cont()
           }
           else
-            p failure err
+            stopOnFail(err)
 
         case Succ(value) ⇒
-          p success value
+          stopOnSucc(value)
       }
-    })
+    }
+  }
+
+  def awaitFuture: Future[A] = {
+    val p = Promise[A]
+    def loop(): Unit = Future {
+      checkRetryRes(p success, p failure, loop)
+    }
     loop
     p.future
   }
