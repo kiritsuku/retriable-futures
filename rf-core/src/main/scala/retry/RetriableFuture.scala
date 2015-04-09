@@ -1,11 +1,12 @@
 package retry
 
-import scala.concurrent.Future
+import retry.util.FutureUtils._
+import scala.concurrent._
 import scala.concurrent.ExecutionContext.Implicits.global
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.Promise
 import scala.concurrent.Await
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 import scala.concurrent.stm._
 
 sealed trait State
@@ -15,33 +16,73 @@ case object Stop extends State
 
 sealed trait Res[+A]
 case object Empty extends Res[Nothing]
-case class Fail(err: Throwable) extends Res[Nothing]
-case class Succ[A](value: A) extends Res[A]
+final case class Fail(err: Throwable) extends Res[Nothing]
+final case class Succ[A](value: A) extends Res[A]
 
-class RetriableFuture[A] {
+trait RetryStrategy {
+  final def triggerRetry(): Unit = {
+    require(canRetry, "It is not allowed to retry the future.")
+    nextRetry()
+  }
+  def nextRetry(): Unit
+
+  def canRetry: Boolean
+}
+object RetryStrategy {
+  implicit class IntAsRetry(private val count: Int) extends AnyVal {
+    def times: RetryStrategy = CountRetryStrategy(count)
+  }
+}
+
+final case class DurationRetryStrategy(duration: FiniteDuration) extends RetryStrategy {
+
+  private var startTime: Long = _
+
+  override def nextRetry(): Unit = {
+    if (startTime == 0)
+      startTime = System.nanoTime()
+  }
+
+  override def canRetry =
+    if (startTime == 0)
+      true
+    else
+      (System.nanoTime-startTime).nanos > duration
+}
+
+final case class CountRetryStrategy(count: Int) extends RetryStrategy {
+
+  private var c = count
+
+  override def nextRetry() = c -= 1
+  override def canRetry = c > 0
+}
+
+trait RetriableFuture[A] {
+
+  def strategy: RetryStrategy
+  def state: Ref[State]
+  def res: Ref[Res[A]]
+
+  def onSuccess[U](f: PartialFunction[A, U]): Unit
+  def onFailure[U](f: PartialFunction[Throwable, U]): Unit
+  def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A]
+  def future: Future[A]
+  def awaitFuture: Future[A]
+}
+
+final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends RetriableFuture[A] {
 
   val state = Ref[State](Idle)
   val res = Ref[Res[A]](Empty)
 
-  @volatile private var listeners = Seq[Res[A] ⇒ Unit]()
+  def onSuccess[U](pf: PartialFunction[A, U]): Unit =
+    awaitFuture.onSuccess(pf)
 
-  def onSuccess[U](f: PartialFunction[A, U]): Unit = {
-    listeners :+= ((_: Res[A]) match {
-      case Succ(value) ⇒ if (f.isDefinedAt(value)) f(value); ()
-      case _           ⇒
-    })
-    notifyListeners()
-  }
+  def onFailure[U](pf: PartialFunction[Throwable, U]): Unit =
+    awaitFuture.onFailure(pf)
 
-  def onFailure[U](f: PartialFunction[Throwable, U]): Unit = {
-    listeners :+= ((_: Res[A]) match {
-      case Fail(err) ⇒ if (f.isDefinedAt(err)) f(err); ()
-      case _         ⇒
-    })
-    notifyListeners()
-  }
-
-  private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): () ⇒ Unit = {
+  private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): Unit = {
     atomic { implicit txn ⇒
       state() match {
         case Idle ⇒
@@ -49,26 +90,29 @@ class RetriableFuture[A] {
         case Retry ⇒
           state() = Idle
           res() = Empty
-          cont
+          cont()
         case Stop ⇒
-          stop
+          stop()
       }
     }
   }
+
   def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A] = {
     f onSuccess {
       case value ⇒
         atomic { implicit txn ⇒
           state() = Stop
           res() = Succ(value)
-          notifyListeners()
         }
-        checkRetryState(stop, cont)()
+        checkRetryState(stop, cont)
     }
     f onFailure {
       case err ⇒
-        atomic { implicit txn ⇒ res() = Fail(err) }
-        checkRetryState(stop, cont)()
+        atomic { implicit txn ⇒
+          state() = Idle
+          res() = Fail(err)
+        }
+        checkRetryState(stop, cont)
     }
     this
   }
@@ -85,20 +129,52 @@ class RetriableFuture[A] {
     p.future
   }
 
-  private def notifyListeners() = atomic { implicit txn ⇒
-    val r = res()
-    listeners foreach (_(r))
+  private def checkRetryRes(stopOnSucc: A ⇒ Unit, stopOnFail: Throwable ⇒ Unit, cont: () ⇒ Unit): Unit = {
+    atomic { implicit txn ⇒
+      res() match {
+        case Empty ⇒
+          retry
+
+        case Fail(err) ⇒
+          if (strategy.canRetry) {
+            strategy.triggerRetry()
+            res() = Empty
+            state() = Retry
+            cont()
+          }
+          else
+            stopOnFail(err)
+
+        case Succ(value) ⇒
+          stopOnSucc(value)
+      }
+    }
+  }
+
+  def awaitFuture: Future[A] = {
+    val p = Promise[A]
+    def loop(): Unit = Future {
+      checkRetryRes(p success, p failure, loop)
+    }
+    loop
+    p.future
   }
 }
 object RetriableFuture {
 
-  def apply[A](f: ⇒ A): RetriableFuture[A] = {
-    val rf = new RetriableFuture[A]
-    def loop(): Unit = rf.fromFuture(Future(f), () ⇒ (), loop)
+  def apply[A](f: ⇒ A)(implicit rs: RetryStrategy): RetriableFuture[A] = {
+    val rf = new DefaultRetriableFuture[A](rs)
+    def loop(): Unit = {
+      rf.fromFuture(Future(f), () ⇒ (), loop)
+    }
     loop()
     rf
   }
 
+  def await[A](rf: RetriableFuture[A]): A = {
+    Await.result(rf.awaitFuture, Duration.Inf)
+  }
+  /*
   def orElse[A](rf1: RetriableFuture[A], rf2: RetriableFuture[A]): RetriableFuture[A] = {
     fromFutOp(Seq(rf1, rf2)) {
       case Seq(rf1, rf2) ⇒
@@ -109,7 +185,7 @@ object RetriableFuture {
   }
 
   private def fromFutOp[A](fs: Seq[RetriableFuture[A]])(prod: Seq[RetriableFuture[A]] ⇒ Future[A]): RetriableFuture[A] = {
-    val rf = new RetriableFuture[A]
+    val rf = new DefaultRetriableFuture[A]
     def loop(): Unit = {
       val f = prod(fs)
       val stop = () ⇒ {
@@ -124,5 +200,6 @@ object RetriableFuture {
     loop()
     rf
   }
+  */
 
 }
