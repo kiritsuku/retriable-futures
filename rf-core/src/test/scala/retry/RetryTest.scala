@@ -102,4 +102,31 @@ class RetryTest extends TestHelper {
     val rf = RetriableFuture { ex }
     1 to 10 map (_ ⇒ fail(rf)) foreach (f ⇒ await(f.failed).isInstanceOf[TestException] === true)
   }
+
+  @Test
+  def orElse_chooses_first_future_on_succ() = {
+    implicit val strategy = 0.times
+    val rf1 = RetriableFuture { 1 }
+    val rf2 = RetriableFuture { 2 }
+    val rf = RetriableFuture.orElse(rf1, rf2)
+    await(succ(rf)) === 1
+  }
+
+  @Test
+  def orElse_chooses_second_future_on_err() = {
+    implicit val strategy = 0.times
+    val rf1 = RetriableFuture[Int] { ex }
+    val rf2 = RetriableFuture { 2 }
+    val rf = RetriableFuture.orElse(rf1, rf2)
+    await(succ(rf)) === 2
+  }
+
+  @Test
+  def orElse_fails_when_both_futures_fail() = {
+    implicit val strategy = 0.times
+    val rf1 = RetriableFuture[Int] { ex }
+    val rf2 = RetriableFuture[Int] { ex }
+    val rf = RetriableFuture.orElse(rf1, rf2)
+    await(fail(rf).failed).isInstanceOf[TestException] === true
+  }
 }

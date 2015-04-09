@@ -173,8 +173,8 @@ object RetriableFuture {
   def await[A](rf: RetriableFuture[A]): A = {
     Await.result(rf.awaitFuture, Duration.Inf)
   }
-  /*
-  def orElse[A](rf1: RetriableFuture[A], rf2: RetriableFuture[A]): RetriableFuture[A] = {
+
+  def orElse[A](rf1: RetriableFuture[A], rf2: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A] = {
     fromFutOp(Seq(rf1, rf2)) {
       case Seq(rf1, rf2) ⇒
         val f1 = rf1.future
@@ -183,8 +183,11 @@ object RetriableFuture {
     }
   }
 
-  private def fromFutOp[A](fs: Seq[RetriableFuture[A]])(prod: Seq[RetriableFuture[A]] ⇒ Future[A]): RetriableFuture[A] = {
-    val rf = new DefaultRetriableFuture[A]
+  private def fromFutOp[A]
+      (fs: Seq[RetriableFuture[A]])
+      (prod: Seq[RetriableFuture[A]] ⇒ Future[A])
+      (implicit rs: RetryStrategy): RetriableFuture[A] = {
+    val rf = new DefaultRetriableFuture[A](rs)
     def loop(): Unit = {
       val f = prod(fs)
       val stop = () ⇒ {
@@ -199,6 +202,5 @@ object RetriableFuture {
     loop()
     rf
   }
-  */
 
 }
