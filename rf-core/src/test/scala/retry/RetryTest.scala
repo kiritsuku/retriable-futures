@@ -108,7 +108,7 @@ class RetryTest extends TestHelper {
     implicit val strategy = 0.times
     val rf1 = RetriableFuture { 1 }
     val rf2 = RetriableFuture { 2 }
-    val rf = RetriableFuture.orElse(rf1, rf2)
+    val rf = rf1 orElse rf2
     await(succ(rf)) === 1
   }
 
@@ -117,7 +117,7 @@ class RetryTest extends TestHelper {
     implicit val strategy = 0.times
     val rf1 = RetriableFuture[Int] { ex }
     val rf2 = RetriableFuture { 2 }
-    val rf = RetriableFuture.orElse(rf1, rf2)
+    val rf = rf1 orElse rf2
     await(succ(rf)) === 2
   }
 
@@ -126,7 +126,7 @@ class RetryTest extends TestHelper {
     implicit val strategy = 0.times
     val rf1 = RetriableFuture[Int] { ex }
     val rf2 = RetriableFuture[Int] { ex }
-    val rf = RetriableFuture.orElse(rf1, rf2)
+    val rf = rf1 orElse rf2
     await(fail(rf).failed).isInstanceOf[TestException] === true
   }
 }

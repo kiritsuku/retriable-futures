@@ -68,6 +68,8 @@ trait RetriableFuture[A] {
   def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A]
   def future: Future[A]
   def awaitFuture: Future[A]
+
+  def orElse(rf: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A]
 }
 
 final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends RetriableFuture[A] {
@@ -158,7 +160,37 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
     loop
     p.future
   }
+
+  def orElse(rf: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A] = {
+    fromFutOp(Seq(this, rf)) {
+      case Seq(rf1, rf2) ⇒
+        val f1 = rf1.future
+        val f2 = rf2.future
+        f1 fallbackTo f2
+    }
+  }
+
+  private def fromFutOp[B]
+      (fs: Seq[RetriableFuture[B]])
+      (prod: Seq[RetriableFuture[B]] ⇒ Future[B])
+      (implicit rs: RetryStrategy): RetriableFuture[B] = {
+    val rf = new DefaultRetriableFuture[B](rs)
+    def loop(): Unit = {
+      val f = prod(fs)
+      val stop = () ⇒ {
+        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Stop })
+      }
+      val cont = () ⇒ {
+        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Retry })
+        loop()
+      }
+      rf.fromFuture(f, stop, cont)
+    }
+    loop()
+    rf
+  }
 }
+
 object RetriableFuture {
 
   def apply[A](f: ⇒ A)(implicit rs: RetryStrategy): RetriableFuture[A] = {
@@ -172,35 +204,6 @@ object RetriableFuture {
 
   def await[A](rf: RetriableFuture[A]): A = {
     Await.result(rf.awaitFuture, Duration.Inf)
-  }
-
-  def orElse[A](rf1: RetriableFuture[A], rf2: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A] = {
-    fromFutOp(Seq(rf1, rf2)) {
-      case Seq(rf1, rf2) ⇒
-        val f1 = rf1.future
-        val f2 = rf2.future
-        f1 fallbackTo f2
-    }
-  }
-
-  private def fromFutOp[A]
-      (fs: Seq[RetriableFuture[A]])
-      (prod: Seq[RetriableFuture[A]] ⇒ Future[A])
-      (implicit rs: RetryStrategy): RetriableFuture[A] = {
-    val rf = new DefaultRetriableFuture[A](rs)
-    def loop(): Unit = {
-      val f = prod(fs)
-      val stop = () ⇒ {
-        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Stop })
-      }
-      val cont = () ⇒ {
-        fs foreach (rf ⇒ atomic { implicit txn ⇒ rf.state() = Retry })
-        loop
-      }
-      rf.fromFuture(f, stop, cont)
-    }
-    loop()
-    rf
   }
 
 }
