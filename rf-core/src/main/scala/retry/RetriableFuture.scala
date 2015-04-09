@@ -109,6 +109,7 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
     f onFailure {
       case err ⇒
         atomic { implicit txn ⇒
+          state() = Idle
           res() = Fail(err)
         }
         checkRetryState(stop, cont)
@@ -142,13 +143,10 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
             state() = Retry
             loop
           }
-          else {
+          else
             p failure err
-            state() = Stop
-          }
 
         case Succ(value) ⇒
-          state() = Stop
           p success value
       }
     })
