@@ -72,15 +72,15 @@ trait RetriableFuture[A] {
   def orElse(rf: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A]
 }
 
-final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends RetriableFuture[A] {
+final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) extends RetriableFuture[A] {
 
-  val state = Ref[State](Idle)
-  val res = Ref[Res[A]](Empty)
+  override val state = Ref[State](Idle)
+  override val res = Ref[Res[A]](Empty)
 
-  def onSuccess[U](pf: PartialFunction[A, U]): Unit =
+  override def onSuccess[U](pf: PartialFunction[A, U]): Unit =
     awaitFuture.onSuccess(pf)
 
-  def onFailure[U](pf: PartialFunction[Throwable, U]): Unit =
+  override def onFailure[U](pf: PartialFunction[Throwable, U]): Unit =
     awaitFuture.onFailure(pf)
 
   private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): Unit = {
@@ -98,7 +98,7 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
     }
   }
 
-  def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A] = {
+  override def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A] = {
     f onSuccess {
       case value ⇒
         atomic { implicit txn ⇒
@@ -118,7 +118,7 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
     this
   }
 
-  def future: Future[A] = {
+  override def future: Future[A] = {
     val p = Promise[A]
     atomic { implicit txn ⇒
       res() match {
@@ -152,16 +152,16 @@ final class DefaultRetriableFuture[A](val strategy: RetryStrategy) extends Retri
     }
   }
 
-  def awaitFuture: Future[A] = {
+  override def awaitFuture: Future[A] = {
     val p = Promise[A]
     def loop(): Unit = Future {
       checkRetryRes(p success, p failure, loop)
     }
-    loop
+    loop()
     p.future
   }
 
-  def orElse(rf: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A] = {
+  override def orElse(rf: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A] = {
     fromFutOp(Seq(this, rf)) {
       case Seq(rf1, rf2) ⇒
         val f1 = rf1.future
