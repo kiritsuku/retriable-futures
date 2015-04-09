@@ -1,6 +1,5 @@
 package retry
 
-import retry.util.FutureUtils._
 import scala.concurrent._
 import scala.concurrent.ExecutionContext.Implicits.global
 import java.util.concurrent.atomic.AtomicReference
