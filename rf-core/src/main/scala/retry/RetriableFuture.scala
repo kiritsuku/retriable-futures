@@ -83,7 +83,7 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
   override def onFailure[U](pf: PartialFunction[Throwable, U]): Unit =
     awaitFuture.onFailure(pf)
 
-  private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): Unit = {
+  private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): () ⇒ Unit = {
     atomic { implicit txn ⇒
       state() match {
         case Idle ⇒
@@ -91,9 +91,9 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
         case Retry ⇒
           state() = Idle
           res() = Empty
-          cont()
+          cont
         case Stop ⇒
-          stop()
+          stop
       }
     }
   }
@@ -105,7 +105,7 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
           state() = Stop
           res() = Succ(value)
         }
-        checkRetryState(stop, cont)
+        checkRetryState(stop, cont)()
     }
     f onFailure {
       case err ⇒
@@ -113,7 +113,7 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
           state() = Idle
           res() = Fail(err)
         }
-        checkRetryState(stop, cont)
+        checkRetryState(stop, cont)()
     }
     this
   }
