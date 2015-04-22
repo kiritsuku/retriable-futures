@@ -45,44 +45,44 @@ object Test extends PerformanceTest {
   performance of "SimpleCombinator" in {
     measure method "orElse" in {
       using(sizes) curve "Retriable" in { size ⇒
-        val f = create(size)
+        val f = retriable.create(size)
         f.onSuccess { case _ ⇒ () }
       }
       using(sizes) curve "Standard" in { size ⇒
-        val f = createScalaFuture(size)
+        val f = standard.create(size)
         f.onSuccess { case _ ⇒ () }
       }
     }
   }
 
-  def createScalaFuture(n: Int) = {
-    require(n > 1)
-    val f = 1 to n-1 map (_ ⇒ failScalaFuture()) reduceLeft (_ fallbackTo _)
-    f fallbackTo succScalaFuture()
+  object standard {
+    def create(n: Int) = {
+      require(n > 1)
+      val f = 1 to n-1 map (_ ⇒ fail()) reduceLeft (_ fallbackTo _)
+      f fallbackTo succ()
+    }
+
+    def fail() =
+      Future[Int] { throw new TestException }
+
+    def succ() =
+      Future { 1 }
   }
 
-  def failScalaFuture() = {
-    Future[Int] { throw new TestException }
-  }
+  object retriable {
+    import RetryStrategy._
 
-  def succScalaFuture() = {
-    Future { 1 }
-  }
+    def create(n: Int) = {
+      require(n > 1)
+      implicit val strategy = 0.times
+      val f = 1 to n-1 map (_ ⇒ fail) reduceLeft (_ orElse _)
+      f orElse succ
+    }
 
-  import RetryStrategy._
+    def fail(implicit strategy: RetryStrategy) =
+      RetriableFuture[Int] { throw new TestException }
 
-  def create(n: Int) = {
-    require(n > 1)
-    implicit val strategy = 0.times
-    val f = 1 to n-1 map (_ ⇒ fail) reduceLeft (_ orElse _)
-    f orElse succ
-  }
-
-  def fail(implicit strategy: RetryStrategy) = {
-    RetriableFuture[Int] { throw new TestException }
-  }
-
-  def succ(implicit strategy: RetryStrategy) = {
-    RetriableFuture { 1 }
+    def succ(implicit strategy: RetryStrategy) =
+      RetriableFuture { 1 }
   }
 }
