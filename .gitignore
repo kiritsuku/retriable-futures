@@ -1,6 +1,7 @@
 **/target/
 **/.settings/
 **/META-INF/
+tmp/
 
 .history
 .sbtserver*
