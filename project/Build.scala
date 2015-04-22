@@ -23,10 +23,12 @@ object Build extends sbt.Build {
       "-Ywarn-unused"
     ),
     resolvers ++= Seq(
+      "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/releases"
     ),
     libraryDependencies ++= Seq(
       "org.scala-stm" %% "scala-stm" % "0.7",
-      "junit" % "junit" % "4.12" % "test"
+      "junit" % "junit" % "4.12" % "test",
+      "com.storm-enroute" %% "scalameter" % "0.6" % "test"
     ),
     EclipseKeys.withSource := true,
     initialCommands in console := """
