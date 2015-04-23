@@ -6,14 +6,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 
 import org.jfree.chart.plot.XYPlot
-import org.scalameter.Aggregator
-import org.scalameter.CurveData
-import org.scalameter.Executor
-import org.scalameter.Gen
-import org.scalameter.History
-import org.scalameter.Measurer
-import org.scalameter.PerformanceTest
-import org.scalameter.Persistor
+import org.{scalameter ⇒ sm }
+import org.scalameter.api._
 import org.scalameter.execution.SeparateJvmsExecutor
 import org.scalameter.reporting.ChartReporter
 import org.scalameter.reporting.ChartReporter.ChartFactory
@@ -25,7 +19,7 @@ object Test extends PerformanceTest {
 
   // This exists only because we want to set our own label for the y axis.
   final class XYLine extends ChartFactory.XYLine {
-    override def createChart(scopename: String, cs: Seq[CurveData], histories: Seq[History], colors: Seq[Color] = Seq()): Chart = {
+    override def createChart(scopename: String, cs: Seq[sm.CurveData], histories: Seq[sm.History], colors: Seq[Color] = Seq()): Chart = {
       val c = super.createChart(scopename, cs, histories, colors)
       c.plot.asInstanceOf[XYPlot].getRangeAxis.setLabel("time in ms")
       c
