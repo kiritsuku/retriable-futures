@@ -8,6 +8,7 @@ import org.junit.ComparisonFailure
 import scala.util.control.NoStackTrace
 import org.junit.Ignore
 import scala.concurrent.Future
+import scala.util.control.ControlThrowable
 
 abstract class TestHelper {
 
@@ -56,7 +57,7 @@ abstract class TestHelper {
     throw new TestException
 }
 
-class TestException extends RuntimeException with NoStackTrace
+object TestException extends RuntimeException with ControlThrowable
 
 class RetryTest extends TestHelper {
   import RetryStrategy._
