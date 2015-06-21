@@ -54,7 +54,7 @@ abstract class TestHelper {
     Await.result(f, Duration.Inf)
 
   def ex: Nothing =
-    throw new TestException
+    throw TestException
 }
 
 object TestException extends RuntimeException with ControlThrowable
@@ -101,7 +101,7 @@ class RetryTest extends TestHelper {
   def onFailure_can_handle_multiple_callbacks() = {
     implicit val strategy = 5.times
     val rf = RetriableFuture { ex }
-    1 to 10 map (_ ⇒ fail(rf)) foreach (f ⇒ await(f.failed).isInstanceOf[TestException] === true)
+    1 to 10 map (_ ⇒ fail(rf)) foreach (f ⇒ await(f.failed) === TestException)
   }
 
   @Test
@@ -128,6 +128,6 @@ class RetryTest extends TestHelper {
     val rf1 = RetriableFuture[Int] { ex }
     val rf2 = RetriableFuture[Int] { ex }
     val rf = rf1 orElse rf2
-    await(fail(rf).failed).isInstanceOf[TestException] === true
+    await(fail(rf).failed) === TestException
   }
 }

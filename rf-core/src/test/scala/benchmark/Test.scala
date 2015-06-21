@@ -26,13 +26,13 @@ object Test extends PerformanceTest {
     }
   }
 
-  lazy val executor = SeparateJvmsExecutor(
+  override lazy val executor = SeparateJvmsExecutor(
     new Executor.Warmer.Default,
     Aggregator.min,
     new Measurer.Default
   )
-  lazy val persistor = Persistor.None
-  lazy val reporter = ChartReporter(new XYLine())
+  override lazy val persistor = Persistor.None
+  override lazy val reporter = ChartReporter(new XYLine())
 
   val sizes = Gen.range("# of Futures")(50, 500, 50)
 
@@ -57,7 +57,7 @@ object Test extends PerformanceTest {
     }
 
     def fail() =
-      Future[Int] { throw new TestException }
+      Future[Int] { throw TestException }
 
     def succ() =
       Future { 1 }
@@ -74,7 +74,7 @@ object Test extends PerformanceTest {
     }
 
     def fail(implicit strategy: RetryStrategy) =
-      RetriableFuture[Int] { throw new TestException }
+      RetriableFuture[Int] { throw TestException }
 
     def succ(implicit strategy: RetryStrategy) =
       RetriableFuture { 1 }
