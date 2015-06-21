@@ -57,7 +57,7 @@ abstract class TestHelper {
     throw TestException
 }
 
-object TestException extends RuntimeException with ControlThrowable
+object TestException extends RuntimeException with NoStackTrace
 
 class RetryTest extends TestHelper {
   import RetryStrategy._
