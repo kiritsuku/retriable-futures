@@ -5,6 +5,6 @@ tmp/
 
 .history
 .sbtserver*
-**/.cache
+**/.cache*
 **/.classpath
 **/.project
