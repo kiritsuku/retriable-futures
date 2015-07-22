@@ -8,31 +8,58 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.concurrent.stm._
 
+/**
+ * Represents if the [[RetriableFuture]] should be recomputed or not. [[Idle]]
+ * means that there is a computation already going on. [[Retry]] means that
+ * future has been completed, but that it should be recomputed. And [[Stop]]
+ * means that no further re-computations should be done.
+ */
 sealed trait State
 case object Idle extends State
 case object Retry extends State
 case object Stop extends State
 
+/**
+ * Represents the value of the [[RetriableFuture]]. [[Empty]] means no value is
+ * yet computed, [[Fail]] means the computation has failed and [[Succ]] means
+ * that the value could be computed successfully.
+ */
 sealed trait Res[+A]
 case object Empty extends Res[Nothing]
 final case class Fail(err: Throwable) extends Res[Nothing]
 final case class Succ[A](value: A) extends Res[A]
 
+/**
+ * Contains the logic that checks if the future should be retried when it
+ * failed.
+ */
 trait RetryStrategy {
+  /**
+   * Needs to be called whenever the future is retried.
+   *
+   * Throws an exception if a retry is not allowed.
+   */
   final def triggerRetry(): Unit = {
     require(canRetry, "It is not allowed to retry the future.")
     nextRetry()
   }
-  def nextRetry(): Unit
 
+  /** This is called when the future is retried. */
+  protected def nextRetry(): Unit
+
+  /** Tells whether a retry is necessary. */
   def canRetry: Boolean
 }
+
 object RetryStrategy {
   implicit class IntAsRetry(private val count: Int) extends AnyVal {
     def times: RetryStrategy = CountRetryStrategy(count)
   }
 }
 
+/**
+ * Allows the future to retry for a given `duration`.
+ */
 final case class DurationRetryStrategy(duration: FiniteDuration) extends RetryStrategy {
 
   private var startTime: Long = _
@@ -49,6 +76,9 @@ final case class DurationRetryStrategy(duration: FiniteDuration) extends RetrySt
       (System.nanoTime-startTime).nanos > duration
 }
 
+/**
+ * Allows the future to retry for a given number of times.
+ */
 final case class CountRetryStrategy(count: Int) extends RetryStrategy {
 
   private var c = count
@@ -63,13 +93,25 @@ trait RetriableFuture[A] {
   def state: Ref[State]
   def res: Ref[Res[A]]
 
+  /** If this future succeeds `f` is called. */
   def onSuccess[U](f: PartialFunction[A, U]): Unit
+  /** If this future fails `f` is called. */
   def onFailure[U](f: PartialFunction[Throwable, U]): Unit
-  def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A]
+
+  /**
+   * Converts this [[RetriableFuture]] to a [[scala.concurrent.Future]].
+   */
   def future: Future[A]
+
+  /**
+   * Converts this [[RetriableFuture]] to a [[scala.concurrent.Future]].
+   * If the computation fails, it is retried as long as `strategy` allows it.
+   */
   def awaitFuture: Future[A]
 
   def orElse(rf: RetriableFuture[A])(implicit rs: RetryStrategy): RetriableFuture[A]
+
+  protected def fromFuture(f: Future[A], stop: () ⇒ Unit, cont: () ⇒ Unit): RetriableFuture[A]
 }
 
 final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) extends RetriableFuture[A] {
@@ -193,6 +235,12 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
 
 object RetriableFuture {
 
+  /**
+   * Creates a [[RetriableFuture]] with a given computation `f`.
+   *
+   * A [[RetryStrategy]] is needed, which specifies how the future should be
+   * retried.
+   */
   def apply[A](f: ⇒ A)(implicit rs: RetryStrategy): RetriableFuture[A] = {
     val rf = new DefaultRetriableFuture[A](rs)
     def loop(): Unit = {
@@ -202,6 +250,10 @@ object RetriableFuture {
     rf
   }
 
+  /**
+   * Wait for the value of the future. If the computation fails, it is retries
+   * as long as the [[RetryStrategy]] allows it.
+   */
   def await[A](rf: RetriableFuture[A]): A = {
     Await.result(rf.awaitFuture, Duration.Inf)
   }
