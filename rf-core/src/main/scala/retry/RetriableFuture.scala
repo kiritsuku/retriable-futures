@@ -125,6 +125,11 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
   override def onFailure[U](pf: PartialFunction[Throwable, U]): Unit =
     awaitFuture.onFailure(pf)
 
+  /**
+   * Returns either `stop` or `cont` based on the value of [[state]]. If the
+   * state is [[Stop]], `stop` is returned. If it is [[Retry]], `cont` is
+   * returned. In case the state is [[Idle]], the atomic block is retried.
+   */
   private def checkRetryState(stop: () ⇒ Unit, cont: () ⇒ Unit): () ⇒ Unit = {
     atomic { implicit txn ⇒
       state() match {
@@ -172,6 +177,11 @@ final class DefaultRetriableFuture[A](override val strategy: RetryStrategy) exte
     p.future
   }
 
+  /**
+   * Works similar to [[checkRetryState]]. One of the passed functions
+   * `stopOnSucc`, `stopOnFail` and `cont` is executed based on the value
+   * of [[res]].
+   */
   private def checkRetryRes(stopOnSucc: A ⇒ Unit, stopOnFail: Throwable ⇒ Unit, cont: () ⇒ Unit): Unit = {
     atomic { implicit txn ⇒
       res() match {
